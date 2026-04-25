@@ -25,8 +25,8 @@ gcc udp_client.c PDULib/controlPDU.c PDULib/dataPDU.c -o client
 gcc udp_server.c PDULib/controlPDU.c PDULib/dataPDU.c -o server
 
 # 带 debug（打印原始包、字段内容）
-gcc -DDEBUG udp_client.c PDULib/controlPDU.c PDULib/dataPDU.c -o client
-gcc -DDEBUG udp_server.c PDULib/controlPDU.c PDULib/dataPDU.c -o server
+gcc -DDEBUG udp_client.c PDULib/controlPDU.c PDULib/dataPDU.c -o client -lmysqlclient
+gcc -DDEBUG udp_server.c PDULib/controlPDU.c PDULib/dataPDU.c -o server -lmysqlclient
 ```
 
 初步测试（debug_v 目录）：
@@ -62,14 +62,28 @@ use week_7_client;
 -- ddl语句
 ```
 
+### 测试样例
+
+```
+2
+220101101
+10678040
+1
+1
+19600108
+2
+5
+```
 ---
 
 ## 开发记录
 
 ### PDU 结构优化
+
 - 创建 PDULib 头文件，将原始二进制包与结构化数据解耦
 - 多字节字段（sid、CourseNumber、tid）统一使用大端序（网络字节序）
 
 ### PDU 类型区分
+
 - 发现原始 PDU 无法区分 ControlPDU 与 DataPDU
 - 在所有 PDU 最前方加入 1 字节 `type` 标志位（0x01=Control，0x02=Data）

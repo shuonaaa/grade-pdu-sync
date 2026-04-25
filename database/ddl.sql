@@ -26,6 +26,7 @@ CREATE TABLE SC (
     sid          INT  NOT NULL,
     tid          INT  NOT NULL,
     courseNumber INT  NOT NULL,
+    period       ENUM('last_per', 'next_per'),
     RealScore    INT,
     status       ENUM('pending','submitted','confirmed','finished','exception')  NOT NULL,
     PRIMARY KEY (sid, tid, courseNumber),
