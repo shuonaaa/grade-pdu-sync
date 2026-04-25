@@ -23,23 +23,26 @@ Data contPTD(const DataPDU* pdu) {
     }
 
     switch (pdu->status) {
-        case 1:  
-            snprintf(d.status, sizeof(d.status), "成绩已提交阶段");   
+        case 0:
+            snprintf(d.status, sizeof(d.status), "初始状态");
             break;
-        case 2:  
-            snprintf(d.status, sizeof(d.status), "学院成绩检查通过"); 
+        case 1:
+            snprintf(d.status, sizeof(d.status), "成绩已提交阶段");
             break;
-        case 3:  
-            snprintf(d.status, sizeof(d.status), "学院成绩确认");     
+        case 2:
+            snprintf(d.status, sizeof(d.status), "学院成绩检查通过");
             break;
-        case 4:  
-            snprintf(d.status, sizeof(d.status), "对象成绩结束");     
+        case 3:
+            snprintf(d.status, sizeof(d.status), "学院成绩确认");
             break;
-        case 5:  
-            snprintf(d.status, sizeof(d.status), "异常");             
+        case 4:
+            snprintf(d.status, sizeof(d.status), "对象成绩结束");
             break;
-        default: 
-            snprintf(d.status, sizeof(d.status), "特殊异常");         
+        case 5:
+            snprintf(d.status, sizeof(d.status), "异常");
+            break;
+        default:
+            snprintf(d.status, sizeof(d.status), "特殊异常");
             break;
     }
 
@@ -102,18 +105,13 @@ DataPDU contDTP(const Data* d) {
     else
         pdu.P = 0;
 
-    if(strcmp(d->status, "成绩已提交阶段") == 0) 
-        pdu.status = 1;
-    else if (strcmp(d->status, "学院成绩检查通过")==0) 
-        pdu.status = 2;
-    else if (strcmp(d->status, "学院成绩确认") == 0) 
-        pdu.status = 3;
-    else if (strcmp(d->status, "对象成绩结束") == 0) 
-        pdu.status = 4;
-    else if (strcmp(d->status, "异常") == 0) 
-        pdu.status = 5;
-    else 
-        pdu.status = 0;
+    if      (strcmp(d->status, "初始状态")         == 0) pdu.status = 0;
+    else if (strcmp(d->status, "成绩已提交阶段")   == 0) pdu.status = 1;
+    else if (strcmp(d->status, "学院成绩检查通过") == 0) pdu.status = 2;
+    else if (strcmp(d->status, "学院成绩确认")     == 0) pdu.status = 3;
+    else if (strcmp(d->status, "对象成绩结束")     == 0) pdu.status = 4;
+    else if (strcmp(d->status, "异常")             == 0) pdu.status = 5;
+    else                                                  pdu.status = 0xFF;
 
     pdu.real_score_type = (uint8_t)(d->score.type << 6);
     pdu.real_score_length = 1;

@@ -1,6 +1,3 @@
--- 自动生成，勿手动编辑
-USE week_7_server;
-
 INSERT INTO Student (sid, name, birth, gender) VALUES
     (220101101, '莫蓉宁', '2004-10-10', '女'),
     (220101102, '曾若雨', '2004-08-09', '女'),

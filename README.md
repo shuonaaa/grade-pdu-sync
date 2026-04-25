@@ -74,6 +74,11 @@ use week_7_client;
 2
 5
 ```
+
+
+```
+gcc -o app_sim app_sim.c PDULib/controlPDU.c -I. -lmysqlclient -lm 2>&1
+```
 ---
 
 ## 开发记录

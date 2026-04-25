@@ -1,6 +1,3 @@
--- 自动生成，勿手动编辑
-USE week_7_server;
-
 INSERT INTO Course (courseNumber, courseName, credit, courseHour, ScoreType) VALUES
     (75934702, '高等数学A', 4, 64, 'percentile'),
     (38377266, '高等数学B', 3, 48, 'percentile'),

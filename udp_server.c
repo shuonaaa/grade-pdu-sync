@@ -5,6 +5,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <arpa/inet.h>
+#include <unistd.h>
 #include <mysql/mysql.h>
 #include "PDULib/controlPDU.h"
 #include "PDULib/dataPDU.h"
@@ -12,9 +13,27 @@
 #define PORT_SERVER 8888
 #define LENGTH 32
 
+static uint8_t mysql_enum_to_status_code(const char* s) {
+    if      (strcmp(s, "pending")   == 0) return 0;
+    else if (strcmp(s, "submitted") == 0) return 1;
+    else if (strcmp(s, "checked")   == 0) return 2;
+    else if (strcmp(s, "confirmed") == 0) return 3;
+    else if (strcmp(s, "finished")  == 0) return 4;
+    else if (strcmp(s, "exception") == 0) return 5;
+    else                                   return 0xFF;
+}
+
+static int validate_score(const char* score_type, int raw) {
+    if      (strcmp(score_type, "percentile") == 0) return (raw >= 0 && raw <= 100);
+    else if (strcmp(score_type, "fivePoint")  == 0) return (raw >= 0 && raw <= 5);
+    else if (strcmp(score_type, "examCheck")  == 0) return (raw >= 1 && raw <= 5);
+    return 0;
+}
+
 const char* status_to_enum(const char* status) {
-    if      (strcmp(status, "成绩已提交阶段")   == 0) return "submitted";
-    else if (strcmp(status, "学院成绩检查通过") == 0) return "submitted";
+    if      (strcmp(status, "初始状态")         == 0) return "pending";
+    else if (strcmp(status, "成绩已提交阶段")   == 0) return "submitted";
+    else if (strcmp(status, "学院成绩检查通过") == 0) return "checked";
     else if (strcmp(status, "学院成绩确认")     == 0) return "confirmed";
     else if (strcmp(status, "对象成绩结束")     == 0) return "finished";
     else if (strcmp(status, "异常")             == 0) return "exception";
@@ -48,21 +67,127 @@ void insert_data_to_db(MYSQL* conn, Data* D) {
     default: realScore = 0; break;
     }
 
+    const char* pdu_score_type;
+    switch (D->score.type) {
+    case 1:  pdu_score_type = "percentile"; break;
+    case 2:  pdu_score_type = "fivePoint";  break;
+    default: pdu_score_type = "examCheck";  break;
+    }
+
+    char check[256];
+    snprintf(check, sizeof(check),
+        "SELECT C.ScoreType, SC.status FROM Course C "
+        "LEFT JOIN SC ON SC.courseNumber = C.courseNumber "
+        "  AND SC.sid = %d AND SC.tid = %d "
+        "WHERE C.courseNumber = %d",
+        sid, tid, courseNumber);
+
+    if (mysql_real_query(conn, check, strlen(check))) {
+        debugPrintf("insert_data_to_db 查询失败: %s\n", mysql_error(conn));
+        return;
+    }
+
+    MYSQL_RES* res = mysql_store_result(conn);
+    if (!res) return;
+    MYSQL_ROW row = mysql_fetch_row(res);
+
+    if (!row) {
+        // Course 表里找不到该课程，数据异常
+        debugPrintf("insert_data_to_db 跳过: courseNumber=%d 不存在于 Course 表\n", courseNumber);
+        mysql_free_result(res);
+        return;
+    }
+
+    const char* db_score_type = row[0];  
+    const char* db_status     = row[1];   
+
+    mysql_free_result(res);
+
+    // 成绩类型是否一致
+    if (strcmp(db_score_type, pdu_score_type) != 0) {
+        debugPrintf("insert_data_to_db 跳过: 成绩类型不一致 (Course=%s, PDU=%s)\n",
+                    db_score_type, pdu_score_type);
+        return;
+    }
+
+    // 分数是否合法
+    if (!validate_score(db_score_type, realScore)) {
+        debugPrintf("insert_data_to_db 跳过: 分数 %d 超出 %s 合法区间\n",
+                    realScore, db_score_type);
+        return;
+    }
+
+    // PDU状态是否合法
+    if (strcmp(status_str, "submitted") != 0 && strcmp(status_str, "pending") != 0) {
+        debugPrintf("insert_data_to_db 跳过: PDU 状态非 submitted 或 pending (PDU=%s)\n", status_str);
+        return;
+    }
+
     char query[256];
-    snprintf(query, sizeof(query),
-        "INSERT INTO SC (sid, tid, courseNumber, period, RealScore, status) VALUES (%d, %d, %d, '%s', %d, '%s')",
-        sid, tid, courseNumber, period_str, realScore, status_str);
-    debugPrintf("发出: %s\n", query);
-    if (mysql_real_query(conn, query, strlen(query)))
-        debugPrintf("insert_data_to_db 失败: %s\n", mysql_error(conn));
-    else
-        debugPrintf("insert_data_to_db 成功: sid=%s\n", D->sid);
+    if (db_status == NULL) {
+        // SC 无记录 : INSERT
+        snprintf(query, sizeof(query),
+            "INSERT INTO SC (sid, tid, courseNumber, period, RealScore, status) "
+            "VALUES (%d, %d, %d, '%s', %d, '%s')",
+            sid, tid, courseNumber, period_str, realScore, status_str);
+        debugPrintf("发出(INSERT): %s\n", query);
+        if (mysql_real_query(conn, query, strlen(query)))
+            debugPrintf("insert_data_to_db INSERT 失败: %s\n", mysql_error(conn));
+        else
+            debugPrintf("insert_data_to_db INSERT 成功: sid=%s\n", D->sid);
+    } else {
+        // 状态是 submited 时 ， 不能设为pending
+        if (strcmp(db_status, "submitted") == 0 && strcmp(status_str, "pending") == 0) {
+            debugPrintf("insert_data_to_db 跳过: 不可以将 submited 状态改为 pending\n");
+            return;
+        }
+        // SC 有记录 : 状态必须是 submitted 或 pending 才能更新
+        if (strcmp(db_status, "submitted") != 0 && strcmp(db_status, "pending") != 0) {
+            debugPrintf("insert_data_to_db 跳过: SC 状态非 submitted 或 pending (DB=%s)\n", db_status);
+            return;
+        }
+        snprintf(query, sizeof(query),
+            "UPDATE SC SET RealScore = %d , status='%s' "
+            "WHERE sid = %d AND tid = %d AND courseNumber = %d",
+            realScore, status_str, sid, tid, courseNumber);
+        debugPrintf("发出(UPDATE): %s\n", query);
+        if (mysql_real_query(conn, query, strlen(query)))
+            debugPrintf("insert_data_to_db UPDATE 失败: %s\n", mysql_error(conn));
+        else
+            debugPrintf("insert_data_to_db UPDATE 成功: sid=%s\n", D->sid);
+    }
 }
 
 void insert_control_to_db(MYSQL* conn, Control* C) {
     int sid          = atoi(C->sid);
     int courseNumber = atoi(C->CourseNumber);
     const char* status_str = status_to_enum(C->status);
+
+    // 查当前状态以校验转换合法性
+    char check[256];
+    snprintf(check, sizeof(check),
+        "SELECT status FROM SC WHERE sid = %d AND courseNumber = %d",
+        sid, courseNumber);
+    if (mysql_real_query(conn, check, strlen(check))) {
+        debugPrintf("insert_control_to_db 查询失败: %s\n", mysql_error(conn));
+        return;
+    }
+    MYSQL_RES* res = mysql_store_result(conn);
+    if (!res) return;
+    MYSQL_ROW row = mysql_fetch_row(res);
+    if (!row) {
+        debugPrintf("insert_control_to_db 跳过: sid=%d courseNumber=%d 无记录\n", sid, courseNumber);
+        mysql_free_result(res);
+        return;
+    }
+    const char* cur_status = row[0];
+    if (!status_transition_valid(mysql_enum_to_status_code(cur_status),
+                                 mysql_enum_to_status_code(status_str))) {
+        debugPrintf("insert_control_to_db 跳过: 非法状态转换 (%s → %s)\n", cur_status, status_str);
+        mysql_free_result(res);
+        return;
+    }
+    mysql_free_result(res);
 
     char query[128];
     snprintf(query, sizeof(query),

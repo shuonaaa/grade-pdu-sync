@@ -45,4 +45,8 @@
   ControlPDU BtoControlPDU(const char* buf);
   void ControlPDUtoB(const ControlPDU* pdu, char* buf);
 
+  /* 状态机转换校验：1=合法, 0=非法 */
+  int status_transition_valid(uint8_t from, uint8_t to);
+  int status_transition_valid_cn(const char* from_cn, const char* to_cn);
+
 #endif

@@ -1,6 +1,3 @@
--- 自动生成，勿手动编辑
-USE week_7_server;
-
 INSERT INTO Teacher (tid, name, gender) VALUES
     (19710316, '毛翠慧', '女'),
     (19880701, '崔翠', '女'),
