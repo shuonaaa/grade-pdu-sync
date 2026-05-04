@@ -4,7 +4,7 @@
 #include <arpa/inet.h>
 
 /* 状态转换合法性表 [from][to], 1=允许, 0=禁止 */
-static const uint8_t transition_table[6][6] = {
+const uint8_t transition_table[6][6] = {
     /*             to: 0  1  2  3  4  5 */
     /* 0 pending    */{1, 1, 0, 0, 0, 0},
     /* 1 submitted  */{0, 1, 1, 0, 0, 1},
@@ -19,7 +19,7 @@ int status_transition_valid(uint8_t from, uint8_t to) {
     return transition_table[from][to];
 }
 
-static uint8_t cn_to_status_code(const char* s) {
+uint8_t cn_to_status_code(const char* s) {
     if      (strcmp(s, "初始状态")         == 0) return 0;
     else if (strcmp(s, "成绩已提交阶段")   == 0) return 1;
     else if (strcmp(s, "学院成绩检查通过") == 0) return 2;

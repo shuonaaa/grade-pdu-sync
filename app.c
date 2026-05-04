@@ -114,41 +114,20 @@ void cli_write_data(MYSQL* cli,
                sid, tid, courseNumber, raw, status_enum);
 }
 
-void cli_write_control(MYSQL* cli, MYSQL* srv,
+void cli_write_control(MYSQL* cli,
                                int sid, int courseNumber,
-                               const char* period, const char* status_enum) {
-    // ControlPDU 无 tid , 从 server 拿
-    char q[256]; int tid = 0;
-    snprintf(q, sizeof(q),
-        "SELECT tid FROM SC WHERE sid=%d AND courseNumber=%d LIMIT 1", sid, courseNumber);
-    if (!mysql_real_query(srv, q, strlen(q))) {
-        MYSQL_RES* r = mysql_store_result(srv);
-        if (r) {
-            MYSQL_ROW row = mysql_fetch_row(r);
-            if (row && row[0]) tid = atoi(row[0]);
-            mysql_free_result(r);
-        }
-    }
-
+                               const char* status_enum) {
+    char q[256];
     snprintf(q, sizeof(q),
         "UPDATE SC SET status='%s',sent=2 WHERE sid=%d AND courseNumber=%d",
         status_enum, sid, courseNumber);
     mysql_real_query(cli, q, strlen(q));
-    if (mysql_affected_rows(cli) > 0) {
+    if (mysql_affected_rows(cli) > 0)
         printf("  [排队] ControlPDU sent=2  sid=%d course=%d status=%s\n",
                sid, courseNumber, status_enum);
-        return;
-    }
-    // 无记录则 INSERT 
-    snprintf(q, sizeof(q),
-        "INSERT INTO SC (sid,tid,courseNumber,period,status,sent)"
-        " VALUES (%d,%d,%d,'%s','%s',2)",
-        sid, tid, courseNumber, period, status_enum);
-    if (mysql_real_query(cli, q, strlen(q)))
-        printf("  [错误] client 写入: %s\n", mysql_error(cli));
     else
-        printf("  [排队] ControlPDU sent=2  sid=%d course=%d status=%s\n",
-               sid, courseNumber, status_enum);
+        printf("  [错误] client 无记录 sid=%d course=%d，ControlPDU 需先提交成绩\n",
+               sid, courseNumber);
 }
 
 // 业务校验
@@ -200,9 +179,7 @@ void do_data(MYSQL* cli, MYSQL* srv,
     cli_write_data(cli, sid, tid, courseNumber, period_enum, raw, status_enum);
 }
 
-void do_control(MYSQL* cli, MYSQL* srv,
-                int sid, int courseNumber,
-                const char* period_enum, const char* status_enum) {
+void do_control(MYSQL* cli, MYSQL* srv,int sid, int courseNumber, const char* status_enum) {
 
     // server 必须有记录
     char srv_status[32] = {0};
@@ -222,7 +199,7 @@ void do_control(MYSQL* cli, MYSQL* srv,
         return;
     }
 
-    cli_write_control(cli, srv, sid, courseNumber, period_enum, status_enum);
+    cli_write_control(cli, sid, courseNumber, status_enum);
 }
 
 // 查看失败记录
@@ -296,11 +273,9 @@ void interactive(MYSQL* cli, MYSQL* srv) {
             do_data(cli, srv, sid, tid, courseNumber, period_enum, score_str, status_enum);
 
         } else if (choice == 2) {
-            int sid, courseNumber, period_sel, ssel;
-            printf("学号: ");             scanf("%d", &sid);
-            printf("课程号: ");           scanf("%d", &courseNumber);
-            printf("学期 (1=上 2=下): "); scanf("%d", &period_sel);
-            const char* period_enum = (period_sel == 1) ? "last_per" : "next_per";
+            int sid, courseNumber, ssel;
+            printf("学号: ");   scanf("%d", &sid);
+            printf("课程号: "); scanf("%d", &courseNumber);
 
             printf("目标状态:\n");
             printf("  0. 初始状态       (pending)    [仅异常后重置]\n");
@@ -312,7 +287,7 @@ void interactive(MYSQL* cli, MYSQL* srv) {
             printf("请选择: "); scanf("%d", &ssel);
             if (ssel < 0 || ssel > 5) { printf("  [错误] 无效选项\n"); continue; }
 
-            do_control(cli, srv, sid, courseNumber, period_enum, ctl_codes[ssel]);
+            do_control(cli, srv, sid, courseNumber, ctl_codes[ssel]);
 
         } else if (choice == 3) {
             view_failed(cli);

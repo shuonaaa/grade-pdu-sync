@@ -6,9 +6,13 @@
 #include <stdlib.h>
 #include <arpa/inet.h>
 #include <unistd.h>
+#include <syslog.h>
+#include <fcntl.h>
+#include <sys/file.h>
 #include <mysql/mysql.h>
 #include "PDULib/controlPDU.h"
 #include "PDULib/dataPDU.h"
+#include <errno.h>
 
 #define PORT_SERV 8888
 #define LENGTH 32
@@ -219,7 +223,7 @@ void scanf_in_database(char* buf, MYSQL* conn) {
             }
         }
 
-        int status_ok = (strcmp(d.status, "成绩已提交阶段") == 0);
+        int status_ok = (strcmp(d.status, "初始状态") == 0 || strcmp(d.status, "成绩已提交阶段") == 0 );
         int score_ok  = validate_score(course_score_type, raw);
         if (!status_ok || !score_ok) {
             debugPrintf("DataPDU 跳过，标记 sent=3 (status=%s, ScoreType=%s, raw=%d)\n",
@@ -311,8 +315,8 @@ void client_process(int fd, struct sockaddr* addr) {
 
     MYSQL* conn = mysql_init(NULL);
     if (!mysql_real_connect(conn, "127.0.0.1", "root", "123456", "week_7_client", 0, NULL, 0)) {
-      printf("mysql_real_connect 失败: %s\n", mysql_error(conn));                                                              
-      exit(-1);
+        syslog(LOG_ERR, "mysql_real_connect 失败: %s", mysql_error(conn));
+        exit(-1);
     }
     mysql_set_character_set(conn, "utf8");
 
@@ -328,18 +332,48 @@ void client_process(int fd, struct sockaddr* addr) {
     }    
 }
 
+
+int lockfile(int fd) {
+    struct flock fl;
+    fl.l_type = F_WRLCK;
+    fl.l_start = 0;
+    fl.l_whence = SEEK_SET;
+    fl.l_len = 0;
+    return(fcntl(fd,F_SETLK,&fl));
+}
+
 int main(int agrc , char* argv[]) {
     int fd;
     struct sockaddr_in addr_serv;
+
+    daemon(0, 0);
+    openlog("udp_client", LOG_PID, LOG_DAEMON);
+
+    int pid_fd = open("/var/run/udp_client.pid", O_RDWR | O_CREAT, 0755);
+    if (pid_fd < 0) { syslog(LOG_ERR, "无法打开 PID 文件"); exit(1); }
+    if (lockfile(pid_fd) < 0) {
+        if(errno == EACCES || errno == EAGAIN) {
+            syslog(LOG_ERR, "已有实例在运行，退出");
+            close(pid_fd);
+            exit(1);
+        }
+        syslog(LOG_ERR, "lockfile 失败: %m");
+        exit(1);
+    }
+    ftruncate(pid_fd,0);
+    char pid_str[16];
+    snprintf(pid_str, sizeof(pid_str), "%d\n", getpid());
+    write(pid_fd, pid_str, strlen(pid_str));
 
     fd = socket(AF_INET,SOCK_DGRAM,0);
     memset(&addr_serv,0,sizeof(addr_serv));
     addr_serv.sin_family = AF_INET;
     inet_aton("127.0.0.1", &addr_serv.sin_addr);
-    printf("IP address is: %s\n",inet_ntoa(addr_serv.sin_addr));
+    syslog(LOG_INFO, "connecting to %s:%d", inet_ntoa(addr_serv.sin_addr), PORT_SERV);
     addr_serv.sin_port = htons(PORT_SERV);
 
     client_process(fd, (struct sockaddr*)&addr_serv);
 
+    closelog();
     exit(0);
 }

@@ -8,6 +8,7 @@
 homework/7/
 ├── udp_client.c          # 客户端：输入/读库 → 打包 → 发送
 ├── udp_server.c          # 服务端：接收 → 解包 → 打印/写库
+├── app_sim.c             # 客户交互端: 输入信息给数据库
 └── PDULib/
     ├── controlPDU.h/c    # ControlPDU：学号、课程号、学期、状态
     └── dataPDU.h/c       # DataPDU：ControlPDU 基础上加教工号、成绩
@@ -27,13 +28,35 @@ gcc udp_server.c PDULib/controlPDU.c PDULib/dataPDU.c -o server
 # 带 debug（打印原始包、字段内容）
 gcc -DDEBUG udp_client.c PDULib/controlPDU.c PDULib/dataPDU.c -o client -lmysqlclient
 gcc -DDEBUG udp_server.c PDULib/controlPDU.c PDULib/dataPDU.c -o server -lmysqlclient
+
+# 命令行前端
+gcc app.c PDULib/controlPDU.c -o app -lmysqlclient
 ```
 
-初步测试（debug_v 目录）：
-
+## 查看日志
 ```bash
-cd ~/homework/7/debug_v && gcc udp_client.c -o client && ./client
-cd ~/homework/7/debug_v && gcc udp_server.c -o server && ./server
+journalctl -t udp_server
+journalctl -t udp_client
+
+journalctl -t udp_server -f
+journalctl -t udp_client -f
+```
+
+## 清理1天之前日志
+```bash
+journalctl --vacuum-time=1d
+```
+
+## 查看文件状态
+```bash
+ps aux | grep "\./server" | grep -v grep
+ps aux | grep "\./client" | grep -v grep
+```
+
+## 删除状态
+```bash
+pkill server
+pkill client
 ```
 
 ---
@@ -75,20 +98,30 @@ use week_7_client;
 5
 ```
 
+### 命令行版交互终端
 
 ```
-gcc -o app_sim app_sim.c PDULib/controlPDU.c -I. -lmysqlclient -lm 2>&1
+gcc -o app app_sim.c PDULib/controlPDU.c -I. -lmysqlclient -lm 2>&1
 ```
 ---
 
-## 开发记录
+## 项目程序运行关系
 
-### PDU 结构优化
+```
+┌──────────┐     insert      ┌────────────────────────┐
+│   app    │ ──────────────► │ database:week_7_client │
+└──────────┘                 └────────────────────────┘
+                                         │
+                                         │ select
+                                         ▼
+┌──────────┐         PDU            ┌──────────┐
+│  Server  │ ◄───────────────────── │  Client  │
+└──────────┘                        └──────────┘
+      │
+      │ insert、update
+      ▼
+┌────────────────────────┐
+│ database:week_7_client │
+└────────────────────────┘
 
-- 创建 PDULib 头文件，将原始二进制包与结构化数据解耦
-- 多字节字段（sid、CourseNumber、tid）统一使用大端序（网络字节序）
-
-### PDU 类型区分
-
-- 发现原始 PDU 无法区分 ControlPDU 与 DataPDU
-- 在所有 PDU 最前方加入 1 字节 `type` 标志位（0x01=Control，0x02=Data）
+```

@@ -6,9 +6,13 @@
 #include <stdlib.h>
 #include <arpa/inet.h>
 #include <unistd.h>
+#include <syslog.h>
+#include <fcntl.h>
+#include <sys/file.h>
 #include <mysql/mysql.h>
 #include "PDULib/controlPDU.h"
 #include "PDULib/dataPDU.h"
+#include <errno.h>
 
 #define PORT_SERVER 8888
 #define LENGTH 32
@@ -264,8 +268,8 @@ void server_process(int fd, struct sockaddr* addr) {
 
     MYSQL* conn = mysql_init(NULL);
     if (!mysql_real_connect(conn, "127.0.0.1", "root", "123456", "week_7_server", 0, NULL, 0)) {
-      printf("mysql_real_connect 失败: %s\n", mysql_error(conn));                                                              
-      exit(-1);
+        syslog(LOG_ERR, "mysql_real_connect 失败: %s", mysql_error(conn));
+        exit(-1);
     }
     mysql_set_character_set(conn, "utf8");
     while (1)
@@ -276,19 +280,49 @@ void server_process(int fd, struct sockaddr* addr) {
     }
 }
 
+int lockfile(int fd) {
+    struct flock fl;
+    fl.l_type = F_WRLCK;
+    fl.l_start = 0;
+    fl.l_whence = SEEK_SET;
+    fl.l_len = 0;
+    return(fcntl(fd,F_SETLK,&fl));
+}
+
 int main(int agrc , char* argv[]) {
     int fd_serv;
     struct sockaddr_in addr_serv , addr_clie;
+
+    daemon(0, 0);
+    openlog("udp_server", LOG_PID, LOG_DAEMON);
+
+    int pid_fd = open("/var/run/udp_server.pid", O_RDWR | O_CREAT, 0755);
+    if (pid_fd < 0) { syslog(LOG_ERR, "无法打开 PID 文件"); exit(1); }
+    if (lockfile(pid_fd) < 0) {
+        if(errno == EACCES || errno == EAGAIN) {
+            close(pid_fd);
+            syslog(LOG_ERR, "已有实例在运行，退出");
+            exit(1);
+        } 
+        syslog(LOG_ERR, "已有实例在运行，退出");
+        exit(1);
+    }
+    ftruncate(pid_fd,0);
+    char pid_str[16];
+    snprintf(pid_str, sizeof(pid_str), "%d\n", getpid());
+    write(pid_fd, pid_str, strlen(pid_str));
+
     fd_serv = socket(AF_INET,SOCK_DGRAM,0);
 
     memset(&addr_serv, 0 , sizeof(addr_serv));
     addr_serv.sin_family = AF_INET;
     inet_aton("127.0.0.1", &addr_serv.sin_addr);
-    printf("IP address is: %s\n",inet_ntoa(addr_serv.sin_addr));
+    syslog(LOG_INFO, "listening on %s:%d", inet_ntoa(addr_serv.sin_addr), PORT_SERVER);
     addr_serv.sin_port = htons(PORT_SERVER);
 
     bind(fd_serv , (struct sockaddr*)&addr_serv , sizeof(addr_serv));
     server_process(fd_serv , (struct sockaddr*)&addr_clie);
 
+    closelog();
     exit(0);
 }

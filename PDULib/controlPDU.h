@@ -1,15 +1,17 @@
 #ifndef CONTROL_PDU_H
   #define CONTROL_PDU_H  
   
+  #include <syslog.h>
+
   #ifdef DEBUG
     #ifndef DEBUGPRINTF
       #define DEBUGPRINTF
-      #define debugPrintf(fmt, ...) printf("[%s:%d] " fmt, __FILE__, __LINE__, ##__VA_ARGS__)
+      #define debugPrintf(fmt, ...) syslog(LOG_DEBUG, "[%s:%d] " fmt, __FILE__, __LINE__, ##__VA_ARGS__)
       #define debugPrintHex(buf, len) do { \
-          printf("[%s:%d] ", __FILE__, __LINE__); \
-          for (int _i = 0; _i < (len); _i++) \
-              printf("%02X ", (unsigned char)(buf)[_i]); \
-          printf("\n"); \
+          char _hbuf[256] = {0}; int _i, _pos = 0; \
+          for (_i = 0; _i < (len) && _pos + 3 < 256; _i++) \
+              _pos += snprintf(_hbuf + _pos, 256 - _pos, "%02X ", (unsigned char)(buf)[_i]); \
+          syslog(LOG_DEBUG, "[%s:%d] hex: %s", __FILE__, __LINE__, _hbuf); \
       } while(0)
     #endif
   #else
