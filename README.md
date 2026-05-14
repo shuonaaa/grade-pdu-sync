@@ -34,6 +34,7 @@ gcc app.c PDULib/controlPDU.c -o app -lmysqlclient
 ```
 
 ## 查看日志
+
 ```bash
 journalctl -t udp_server
 journalctl -t udp_client
@@ -43,17 +44,20 @@ journalctl -t udp_client -f
 ```
 
 ## 清理1天之前日志
+
 ```bash
 journalctl --vacuum-time=1d
 ```
 
 ## 查看文件状态
+
 ```bash
-ps aux | grep "\./server" | grep -v grep
-ps aux | grep "\./client" | grep -v grep
+ps -ef | grep "./server_debug" | grep -v grep
+ps -ef | grep "./client_debug" | grep -v grep
 ```
 
 ## 删除状态
+
 ```bash
 pkill server
 pkill client
@@ -103,6 +107,7 @@ use week_7_client;
 ```
 gcc -o app app_sim.c PDULib/controlPDU.c -I. -lmysqlclient -lm 2>&1
 ```
+
 ---
 
 ## 项目程序运行关系

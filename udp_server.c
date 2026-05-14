@@ -13,9 +13,16 @@
 #include "PDULib/controlPDU.h"
 #include "PDULib/dataPDU.h"
 #include <errno.h>
+#include <signal.h>
+#include <sys/wait.h>
 
 #define PORT_SERVER 8888
 #define LENGTH 32
+#define PIDNUMB 1
+
+void sig_int(int num) {
+    exit(1);
+}
 
 static uint8_t mysql_enum_to_status_code(const char* s) {
     if      (strcmp(s, "pending")   == 0) return 0;
@@ -56,6 +63,10 @@ void insert_data_to_db(MYSQL* conn, Data* D) {
     int courseNumber = atoi(D->CourseNumber);
     const char* period_str = period_to_enum(D->P);
     const char* status_str = status_to_enum(D->status);
+    if (strcmp(period_str, "error") == 0) {
+        debugPrintf("insert_data_to_db 跳过: 非法学期 %s\n", D->P);
+        return;
+    }
 
     int realScore;
     switch (D->score.type) {
@@ -82,9 +93,9 @@ void insert_data_to_db(MYSQL* conn, Data* D) {
     snprintf(check, sizeof(check),
         "SELECT C.ScoreType, SC.status FROM Course C "
         "LEFT JOIN SC ON SC.courseNumber = C.courseNumber "
-        "  AND SC.sid = %d AND SC.tid = %d "
-        "WHERE C.courseNumber = %d",
-        sid, tid, courseNumber);
+        "  AND SC.period = C.period AND SC.sid = %d AND SC.tid = %d "
+        "WHERE C.courseNumber = %d AND C.period = '%s'",
+        sid, tid, courseNumber, period_str);
 
     if (mysql_real_query(conn, check, strlen(check))) {
         debugPrintf("insert_data_to_db 查询失败: %s\n", mysql_error(conn));
@@ -152,8 +163,8 @@ void insert_data_to_db(MYSQL* conn, Data* D) {
         }
         snprintf(query, sizeof(query),
             "UPDATE SC SET RealScore = %d , status='%s' "
-            "WHERE sid = %d AND tid = %d AND courseNumber = %d",
-            realScore, status_str, sid, tid, courseNumber);
+            "WHERE sid = %d AND tid = %d AND courseNumber = %d AND period = '%s'",
+            realScore, status_str, sid, tid, courseNumber, period_str);
         debugPrintf("发出(UPDATE): %s\n", query);
         if (mysql_real_query(conn, query, strlen(query)))
             debugPrintf("insert_data_to_db UPDATE 失败: %s\n", mysql_error(conn));
@@ -165,13 +176,18 @@ void insert_data_to_db(MYSQL* conn, Data* D) {
 void insert_control_to_db(MYSQL* conn, Control* C) {
     int sid          = atoi(C->sid);
     int courseNumber = atoi(C->CourseNumber);
+    const char* period_str = period_to_enum(C->P);
     const char* status_str = status_to_enum(C->status);
+    if (strcmp(period_str, "error") == 0) {
+        debugPrintf("insert_control_to_db 跳过: 非法学期 %s\n", C->P);
+        return;
+    }
 
     // 查当前状态以校验转换合法性
     char check[256];
     snprintf(check, sizeof(check),
-        "SELECT status FROM SC WHERE sid = %d AND courseNumber = %d",
-        sid, courseNumber);
+        "SELECT status FROM SC WHERE sid = %d AND courseNumber = %d AND period = '%s'",
+        sid, courseNumber, period_str);
     if (mysql_real_query(conn, check, strlen(check))) {
         debugPrintf("insert_control_to_db 查询失败: %s\n", mysql_error(conn));
         return;
@@ -180,7 +196,8 @@ void insert_control_to_db(MYSQL* conn, Control* C) {
     if (!res) return;
     MYSQL_ROW row = mysql_fetch_row(res);
     if (!row) {
-        debugPrintf("insert_control_to_db 跳过: sid=%d courseNumber=%d 无记录\n", sid, courseNumber);
+        debugPrintf("insert_control_to_db 跳过: sid=%d courseNumber=%d period=%s 无记录\n",
+                    sid, courseNumber, period_str);
         mysql_free_result(res);
         return;
     }
@@ -195,13 +212,14 @@ void insert_control_to_db(MYSQL* conn, Control* C) {
 
     char query[128];
     snprintf(query, sizeof(query),
-        "UPDATE SC SET status = '%s' WHERE sid = %d AND courseNumber = %d",
-        status_str, sid, courseNumber);
+        "UPDATE SC SET status = '%s' WHERE sid = %d AND courseNumber = %d AND period = '%s'",
+        status_str, sid, courseNumber, period_str);
     debugPrintf("发出: %s\n", query);
     if (mysql_real_query(conn, query, strlen(query)))
         debugPrintf("insert_control_to_db 失败: %s\n", mysql_error(conn));
     else
-        debugPrintf("insert_control_to_db 成功: sid=%s\n", C->sid);
+        debugPrintf("insert_control_to_db 成功: sid=%s courseNumber=%s period=%s\n",
+                    C->sid, C->CourseNumber, C->P);
 }
 
 void ProcessPDU(char* buf, MYSQL* conn) {
@@ -291,7 +309,10 @@ int lockfile(int fd) {
 
 int main(int agrc , char* argv[]) {
     int fd_serv;
+    int status;
     struct sockaddr_in addr_serv , addr_clie;
+
+    signal(SIGINT,sig_int);
 
     daemon(0, 0);
     openlog("udp_server", LOG_PID, LOG_DAEMON);
@@ -321,8 +342,19 @@ int main(int agrc , char* argv[]) {
     addr_serv.sin_port = htons(PORT_SERVER);
 
     bind(fd_serv , (struct sockaddr*)&addr_serv , sizeof(addr_serv));
-    server_process(fd_serv , (struct sockaddr*)&addr_clie);
-
+    
+    for(;;) {
+        pid_t pid[PIDNUMB];
+        int i = 0;
+        for(i=0;i<PIDNUMB;i++) {
+            pid[i] = fork();
+            if(pid[i] == 0) {
+                server_process(fd_serv , (struct sockaddr*)&addr_clie);
+                exit(0);
+            }
+        }
+        wait(&status);
+    }
     closelog();
     exit(0);
 }

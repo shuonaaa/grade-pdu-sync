@@ -13,9 +13,16 @@
 #include "PDULib/controlPDU.h"
 #include "PDULib/dataPDU.h"
 #include <errno.h>
+#include <signal.h>
+#include <sys/wait.h>
 
 #define PORT_SERV 8888
 #define LENGTH 32
+#define PIDNUMB 1
+
+void sig_int(int num) {
+    exit(1);
+}
 
 int validate_score(const char* score_type, int raw) {
     if      (strcmp(score_type, "percentile") == 0) return (raw >= 0  && raw <= 100);
@@ -158,7 +165,7 @@ void scanf_in_database(char* buf, MYSQL* conn) {
     const char* query =
         "SELECT SC.sid, SC.tid, SC.courseNumber, SC.period, SC.RealScore, SC.status, C.ScoreType, SC.sent "
         "FROM SC "
-        "JOIN Course C ON SC.courseNumber = C.courseNumber "
+        "JOIN Course C ON SC.courseNumber = C.courseNumber AND SC.period = C.period "
         "WHERE SC.sent IN (1, 2) LIMIT 1";
 
     if (mysql_real_query(conn, query, strlen(query))) {
@@ -229,8 +236,8 @@ void scanf_in_database(char* buf, MYSQL* conn) {
             debugPrintf("DataPDU 跳过，标记 sent=3 (status=%s, ScoreType=%s, raw=%d)\n",
                         d.status, course_score_type, raw);
             snprintf(update, sizeof(update),
-                "UPDATE SC SET sent=3 WHERE sid=%s AND tid=%s AND courseNumber=%s",
-                row[0], row[1], row[2]);
+                "UPDATE SC SET sent=3 WHERE sid=%s AND tid=%s AND courseNumber=%s AND period='%s'",
+                row[0], row[1], row[2], row[3]);
             mysql_real_query(conn, update, strlen(update));
             mysql_free_result(res);
             return;
@@ -242,8 +249,8 @@ void scanf_in_database(char* buf, MYSQL* conn) {
         debugPrintf("已打包(DataPDU): sid=%s courseNumber=%s\n", d.sid, d.CourseNumber);
 
         snprintf(update, sizeof(update),
-            "UPDATE SC SET sent=0 WHERE sid=%s AND tid=%s AND courseNumber=%s",
-            row[0], row[1], row[2]);
+            "UPDATE SC SET sent=0 WHERE sid=%s AND tid=%s AND courseNumber=%s AND period='%s'",
+            row[0], row[1], row[2], row[3]);
         mysql_real_query(conn, update, strlen(update));
 
     } else {
@@ -266,10 +273,10 @@ void scanf_in_database(char* buf, MYSQL* conn) {
         else                                        status_ok = 0;
 
         if (!status_ok) {
-            debugPrintf("ControlPDU 跳过: 非法控制状态 %s，标记 sent=3\n", row[5]);
+            debugPrintf("ControlPDU 跳过: 非法控制状态 %s，标记 sent=3 (period=%s)\n", row[5], row[3]);
             snprintf(update, sizeof(update),
-                "UPDATE SC SET sent=3 WHERE sid=%s AND courseNumber=%s",
-                row[0], row[2]);
+                "UPDATE SC SET sent=3 WHERE sid=%s AND courseNumber=%s AND period='%s'",
+                row[0], row[2], row[3]);
             mysql_real_query(conn, update, strlen(update));
             mysql_free_result(res);
             return;
@@ -278,12 +285,12 @@ void scanf_in_database(char* buf, MYSQL* conn) {
         ControlPDU pdu = contCTP(&c);
         pdu.type = PDU_TYPE_CONTROL;
         ControlPDUtoB(&pdu, buf);
-        debugPrintf("已打包(ControlPDU): sid=%s courseNumber=%s status=%s\n",
-                    c.sid, c.CourseNumber, c.status);
+        debugPrintf("已打包(ControlPDU): sid=%s courseNumber=%s period=%s status=%s\n",
+                    c.sid, c.CourseNumber, c.P, c.status);
 
         snprintf(update, sizeof(update),
-            "UPDATE SC SET sent=0 WHERE sid=%s AND courseNumber=%s",
-            row[0], row[2]);
+            "UPDATE SC SET sent=0 WHERE sid=%s AND courseNumber=%s AND period='%s'",
+            row[0], row[2], row[3]);
         mysql_real_query(conn, update, strlen(update));
     }
 
@@ -344,7 +351,10 @@ int lockfile(int fd) {
 
 int main(int agrc , char* argv[]) {
     int fd;
+    int status;
     struct sockaddr_in addr_serv;
+
+    signal(SIGINT,sig_int);
 
     daemon(0, 0);
     openlog("udp_client", LOG_PID, LOG_DAEMON);
@@ -372,7 +382,18 @@ int main(int agrc , char* argv[]) {
     syslog(LOG_INFO, "connecting to %s:%d", inet_ntoa(addr_serv.sin_addr), PORT_SERV);
     addr_serv.sin_port = htons(PORT_SERV);
 
-    client_process(fd, (struct sockaddr*)&addr_serv);
+    for(;;) {
+        pid_t pid[PIDNUMB];
+        int i = 0;
+        for(i=0;i<PIDNUMB;i++) {
+            pid[i] = fork();
+            if(pid[i] == 0) {
+                client_process(fd, (struct sockaddr*)&addr_serv);
+                exit(0);
+            }
+        }
+        wait(&status);
+    }
 
     closelog();
     exit(0);

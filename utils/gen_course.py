@@ -165,11 +165,12 @@ COURSES = [
 
 OUT_PATH = os.path.join(os.path.dirname(__file__), '../database/Course_insert.sql')
 OUT_PATH = os.path.normpath(OUT_PATH)
+PERIODS = ('last_per', 'next_per')
 
 with open(OUT_PATH, 'w', encoding='utf-8') as f:
     f.write("-- 自动生成，勿手动编辑\n")
     f.write("USE week_7_server;\n\n")
-    f.write("INSERT INTO Course (courseNumber, courseName, credit, courseHour, ScoreType) VALUES\n")
+    f.write("INSERT INTO Course (courseNumber, period, courseName, credit, courseHour, ScoreType) VALUES\n")
 
     used = set()
     def gen_course_num():
@@ -182,9 +183,10 @@ with open(OUT_PATH, 'w', encoding='utf-8') as f:
     rows = []
     for name, credit, hour, stype in COURSES:
         num = gen_course_num()
-        rows.append(f"    ({num}, '{name}', {credit}, {hour}, '{stype}')")
+        for period in PERIODS:
+            rows.append(f"    ({num}, '{period}', '{name}', {credit}, {hour}, '{stype}')")
 
     f.write(",\n".join(rows))
     f.write(";\n")
 
-print(f"共生成 {len(COURSES)} 门课程 -> {OUT_PATH}")
+print(f"共生成 {len(COURSES)} 门课程、{len(rows)} 条开课记录 -> {OUT_PATH}")
